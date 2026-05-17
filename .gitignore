@@ -1,0 +1,9 @@
+node_modules/
+out/
+release/
+dist/
+.vite/
+*.log
+*.local
+visual-check-*.png
+electron-visual-check.png

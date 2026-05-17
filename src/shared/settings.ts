@@ -1,0 +1,59 @@
+import type { AppSettings } from './types'
+
+export const defaultSettings: AppSettings = {
+  deleteMode: 'trash',
+  mascot: 'detective',
+  matchStrictness: 'smart',
+  animations: {
+    mascot: true,
+    cards: true,
+    modals: true,
+    progress: true
+  },
+  excludedMatches: [],
+  excludedFiles: []
+}
+
+export function normalizeSettings(value: unknown): AppSettings {
+  if (!value || typeof value !== 'object') return defaultSettings
+
+  const input = value as Partial<AppSettings>
+  const animations: Partial<AppSettings['animations']> = input.animations && typeof input.animations === 'object' ? input.animations : {}
+
+  return {
+    deleteMode: input.deleteMode === 'permanent' ? 'permanent' : 'trash',
+    mascot: input.mascot === 'robot' || input.mascot === 'folder' ? input.mascot : 'detective',
+    matchStrictness: input.matchStrictness === 'strict' || input.matchStrictness === 'loose' ? input.matchStrictness : 'smart',
+    animations: {
+      mascot: typeof animations.mascot === 'boolean' ? animations.mascot : defaultSettings.animations.mascot,
+      cards: typeof animations.cards === 'boolean' ? animations.cards : defaultSettings.animations.cards,
+      modals: typeof animations.modals === 'boolean' ? animations.modals : defaultSettings.animations.modals,
+      progress: typeof animations.progress === 'boolean' ? animations.progress : defaultSettings.animations.progress
+    },
+    excludedMatches: Array.isArray(input.excludedMatches)
+      ? input.excludedMatches
+          .filter((item) => item && typeof item === 'object')
+          .map((item) => item as Partial<AppSettings['excludedMatches'][number]>)
+          .filter((item) => typeof item.id === 'string' && typeof item.title === 'string' && Array.isArray(item.filePaths))
+          .map((item) => ({
+            id: item.id as string,
+            title: item.title as string,
+            filePaths: (item.filePaths as unknown[]).filter((path): path is string => typeof path === 'string'),
+            createdAt: typeof item.createdAt === 'number' ? item.createdAt : Date.now()
+          }))
+      : [],
+    excludedFiles: Array.isArray(input.excludedFiles)
+      ? input.excludedFiles
+          .filter((item) => item && typeof item === 'object')
+          .map((item) => item as Partial<AppSettings['excludedFiles'][number]>)
+          .filter((item) => typeof item.id === 'string' && typeof item.name === 'string' && typeof item.path === 'string')
+          .map((item) => ({
+            id: item.id as string,
+            name: item.name as string,
+            path: item.path as string,
+            groupTitle: typeof item.groupTitle === 'string' ? item.groupTitle : 'Unbekannte Gruppe',
+            createdAt: typeof item.createdAt === 'number' ? item.createdAt : Date.now()
+          }))
+      : []
+  }
+}
