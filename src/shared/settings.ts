@@ -11,7 +11,8 @@ export const defaultSettings: AppSettings = {
     progress: true
   },
   excludedMatches: [],
-  excludedFiles: []
+  excludedFiles: [],
+  deleteHistory: []
 }
 
 export function normalizeSettings(value: unknown): AppSettings {
@@ -54,6 +55,22 @@ export function normalizeSettings(value: unknown): AppSettings {
             groupTitle: typeof item.groupTitle === 'string' ? item.groupTitle : 'Unbekannte Gruppe',
             createdAt: typeof item.createdAt === 'number' ? item.createdAt : Date.now()
           }))
+      : [],
+    deleteHistory: Array.isArray(input.deleteHistory)
+      ? input.deleteHistory
+          .filter((item) => item && typeof item === 'object')
+          .map((item) => item as Partial<AppSettings['deleteHistory'][number]>)
+          .filter((item) => typeof item.id === 'string' && typeof item.path === 'string' && typeof item.name === 'string')
+          .map((item) => ({
+            id: item.id as string,
+            path: item.path as string,
+            name: item.name as string,
+            size: typeof item.size === 'number' ? item.size : 0,
+            kind: item.kind === 'folder' ? ('folder' as const) : ('file' as const),
+            mode: item.mode === 'permanent' ? ('permanent' as const) : ('trash' as const),
+            deletedAt: typeof item.deletedAt === 'number' ? item.deletedAt : Date.now()
+          }))
+          .slice(0, 100)
       : []
   }
 }

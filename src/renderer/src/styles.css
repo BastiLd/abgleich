@@ -1877,3 +1877,386 @@ input {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.file-row {
+  grid-template-columns: 112px minmax(320px, 1fr) minmax(330px, 0.9fr) minmax(142px, auto);
+  align-items: center;
+}
+
+.video-thumb {
+  width: 112px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #12343b;
+  border: 1px solid #dce4e2;
+}
+
+.video-thumb img,
+.thumb-fallback {
+  width: 100%;
+  height: 100%;
+}
+
+.video-thumb img {
+  display: block;
+  object-fit: cover;
+}
+
+.thumb-fallback {
+  display: grid;
+  place-items: center;
+  color: #f4d35e;
+  background:
+    linear-gradient(135deg, rgba(42, 157, 143, 0.32), transparent 55%),
+    #12343b;
+}
+
+.thumb-fallback span {
+  align-self: end;
+  margin-bottom: 6px;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.file-action {
+  min-width: 142px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+}
+
+.file-action .mark-toggle,
+.file-action .mini-danger,
+.file-action .mini-secondary {
+  width: 100%;
+}
+
+.file-action .mark-toggle {
+  justify-content: flex-start;
+  padding: 0 8px;
+  border: 1px solid #efd6d0;
+  background: #fff7f4;
+}
+
+.folder-delete-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #fffdf4;
+  border-bottom: 1px solid #eadca8;
+}
+
+.folder-delete-panel > div:first-child strong,
+.folder-delete-panel > div:first-child span {
+  display: block;
+}
+
+.folder-delete-panel > div:first-child span {
+  margin-top: 3px;
+  color: #66777a;
+}
+
+.folder-delete-list {
+  display: grid;
+  gap: 8px;
+}
+
+.folder-delete-row,
+.folder-candidate-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #e1e8e6;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.folder-delete-row.active,
+.folder-candidate-row.active {
+  border-color: #8ed3c7;
+  background: #eaf8f4;
+}
+
+.folder-delete-row span,
+.folder-candidate-row div {
+  min-width: 0;
+}
+
+.folder-delete-row strong,
+.folder-delete-row small,
+.folder-delete-row em,
+.folder-candidate-row strong,
+.folder-candidate-row small,
+.folder-candidate-row em {
+  display: block;
+}
+
+.folder-delete-row small,
+.folder-candidate-row small {
+  margin-top: 3px;
+  color: #66777a;
+  font-style: normal;
+}
+
+.folder-delete-row em,
+.folder-candidate-row em {
+  margin-top: 5px;
+  color: #52666a;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.folder-delete-button {
+  justify-self: end;
+}
+
+.empty-folder-section {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d8e2df;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.empty-folder-section header h2 {
+  margin: 0 0 4px;
+  color: #12343b;
+}
+
+.empty-folder-section header p {
+  margin: 0;
+  color: #66777a;
+}
+
+.folder-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.empty-folder-list {
+  display: grid;
+  gap: 10px;
+}
+
+.empty-folder-group {
+  overflow: hidden;
+  border: 1px solid #dce4e2;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.folder-group-header {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 0;
+  background: #ffffff;
+  color: #12343b;
+  text-align: left;
+  cursor: pointer;
+}
+
+.folder-group-header h3,
+.folder-group-header p {
+  margin: 0;
+}
+
+.folder-group-header p {
+  margin-top: 3px;
+  color: #66777a;
+}
+
+.folder-candidate-list {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  display: grid;
+  gap: 8px;
+  padding: 0 12px;
+  transition:
+    max-height 240ms ease,
+    opacity 180ms ease,
+    padding 180ms ease;
+}
+
+.folder-candidate-list.open {
+  max-height: 2800px;
+  opacity: 1;
+  padding: 0 12px 12px;
+}
+
+.folder-candidate-row {
+  grid-template-columns: 20px 86px minmax(0, 1fr);
+  align-items: center;
+}
+
+.folder-keep-badge,
+.folder-delete-badge {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.folder-keep-badge {
+  color: #174f3a;
+  background: #dff4e8;
+}
+
+.folder-delete-badge {
+  color: #752d21;
+  background: #fff0e8;
+}
+
+.history-modal {
+  width: min(900px, calc(100vw - 56px));
+}
+
+.history-list {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+}
+
+.history-item {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #dce4e2;
+  border-radius: 8px;
+  background: #f8fbfa;
+}
+
+.history-kind {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: #12343b;
+  background: #e8f3f0;
+}
+
+.history-kind.folder {
+  background: #fff0bd;
+}
+
+.history-item strong,
+.history-item span,
+.history-item small {
+  display: block;
+}
+
+.history-item span {
+  margin-top: 3px;
+  color: #66777a;
+}
+
+.history-item small {
+  margin-top: 5px;
+  color: #52666a;
+  overflow-wrap: anywhere;
+}
+
+.settings-modal {
+  width: min(1180px, calc(100vw - 48px));
+  max-height: min(880px, calc(100vh - 40px));
+}
+
+.settings-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(540px, 1.2fr);
+}
+
+.settings-block:has(.mascot-picker) {
+  min-height: 284px;
+}
+
+.mascot-picker {
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  gap: 14px;
+}
+
+.mascot-option {
+  min-height: 222px;
+  padding: 18px 12px 14px;
+  overflow: hidden;
+}
+
+.mascot.compact {
+  width: 150px;
+  height: 150px;
+  margin: 0 auto 10px;
+  transform: none;
+}
+
+.mascot.compact .mascot-head,
+.mascot.compact .robot-body,
+.mascot.compact .folder-body {
+  left: 28px;
+  right: 28px;
+  bottom: 24px;
+  height: 88px;
+}
+
+.mascot.compact .hat {
+  left: 38px;
+  top: 18px;
+  width: 74px;
+}
+
+.mascot.compact .magnifier {
+  right: 4px;
+  bottom: 26px;
+}
+
+.mascot.compact .antenna {
+  left: 71px;
+  top: 14px;
+}
+
+.mascot.compact .film-strip {
+  left: 34px;
+  bottom: 14px;
+  width: 82px;
+}
+
+.mascot.compact .folder-tab {
+  left: 34px;
+  top: 32px;
+}
+
+@media (max-width: 1500px) {
+  .file-row {
+    grid-template-columns: 112px minmax(300px, 1fr) minmax(300px, 0.9fr);
+  }
+
+  .file-action {
+    grid-column: 2 / -1;
+    grid-template-columns: repeat(3, minmax(118px, max-content));
+    justify-content: start;
+  }
+}
+
+@media (max-width: 1180px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+}

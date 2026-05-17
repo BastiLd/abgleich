@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { buildDuplicateGroups, parseMediaName } from './matching'
-import type { MediaFile } from './types'
+﻿import { describe, expect, it } from 'vitest'
+import { buildDuplicateGroups, buildFolderCandidateGroups, parseMediaName } from './matching'
+import type { FolderCandidate, MediaFile } from './types'
 
 function file(name: string, size: number, rootIndex = 0, fingerprint?: string): MediaFile {
   return {
@@ -72,3 +72,42 @@ describe('buildDuplicateGroups', () => {
     expect(groups).toHaveLength(0)
   })
 })
+
+describe('buildFolderCandidateGroups', () => {
+  it('gruppiert ähnliche Ordner ohne Videos', () => {
+    const folders: FolderCandidate[] = [
+      {
+        id: 'a',
+        path: 'D:/A/Movie Name 2020',
+        name: 'Movie Name 2020',
+        parentPath: 'D:/A',
+        rootPath: 'D:/A',
+        rootIndex: 0,
+        fileCount: 2,
+        videoCount: 0,
+        size: 100,
+        modifiedAt: 1,
+        recommendation: 'delete'
+      },
+      {
+        id: 'b',
+        path: 'E:/B/Movie.Name.(2020)',
+        name: 'Movie.Name.(2020)',
+        parentPath: 'E:/B',
+        rootPath: 'E:/B',
+        rootIndex: 1,
+        fileCount: 1,
+        videoCount: 0,
+        size: 90,
+        modifiedAt: 1,
+        recommendation: 'delete'
+      }
+    ]
+
+    const groups = buildFolderCandidateGroups(folders)
+
+    expect(groups).toHaveLength(1)
+    expect(groups[0].folders.some((folder) => folder.recommendation === 'keep')).toBe(true)
+  })
+})
+

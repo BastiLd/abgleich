@@ -22,6 +22,7 @@ export interface AppSettings {
   animations: AnimationSettings
   excludedMatches: ExcludedMatch[]
   excludedFiles: ExcludedFile[]
+  deleteHistory: DeletedHistoryEntry[]
 }
 
 export interface ExcludedMatch {
@@ -80,6 +81,30 @@ export interface DuplicateGroup {
   files: DuplicateFile[]
 }
 
+export interface FolderCandidate {
+  id: string
+  path: string
+  name: string
+  parentPath: string
+  rootPath: string
+  rootIndex: number
+  fileCount: number
+  videoCount: number
+  size: number
+  modifiedAt: number
+  recommendation: 'keep' | 'delete'
+}
+
+export interface FolderCandidateGroup {
+  id: string
+  confidence: MatchConfidence
+  score: number
+  title: string
+  reason: string[]
+  keepId: string
+  folders: FolderCandidate[]
+}
+
 export interface ScanProgress {
   phase: ScanPhase
   message: string
@@ -94,6 +119,7 @@ export interface ScanResult {
   folders: string[]
   extensions: string[]
   groups: DuplicateGroup[]
+  emptyFolderGroups: FolderCandidateGroup[]
 }
 
 export interface ExportRow {
@@ -110,6 +136,7 @@ export interface DeleteTarget {
   path: string
   name: string
   size: number
+  kind?: 'file' | 'folder'
 }
 
 export interface DeleteRequest {
@@ -120,6 +147,11 @@ export interface DeleteRequest {
 export interface DeletedFile {
   id: string
   path: string
+  name: string
+  size: number
+  kind: 'file' | 'folder'
+  mode: DeleteMode
+  deletedAt: number
 }
 
 export interface DeleteFailure {
@@ -133,12 +165,15 @@ export interface DeleteResult {
   failed: DeleteFailure[]
 }
 
+export interface DeletedHistoryEntry extends DeletedFile {}
+
 export interface MediaApi {
   selectFolders: () => Promise<string[]>
   scanFolders: (folders: string[], strictness?: MatchStrictness) => Promise<ScanResult>
   onScanProgress: (callback: (progress: ScanProgress) => void) => () => void
   exportMarked: (rows: ExportRow[]) => Promise<{ canceled: boolean; filePath?: string }>
   deleteFiles: (request: DeleteRequest) => Promise<DeleteResult>
+  getVideoThumbnail: (path: string) => Promise<string | undefined>
   loadSettings: () => Promise<AppSettings>
   saveSettings: (settings: AppSettings) => Promise<AppSettings>
 }

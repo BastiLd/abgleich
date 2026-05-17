@@ -1,17 +1,27 @@
-﻿import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
+﻿import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
 import { basename, dirname, extname, join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import { buildDuplicateGroups, parseMediaName } from '../shared/matching'
+import { buildDuplicateGroups, buildFolderCandidateGroups, parseMediaName } from '../shared/matching'
 import { defaultSettings, normalizeSettings } from '../shared/settings'
-import type { AppSettings, DeleteRequest, DeleteResult, ExportRow, MatchStrictness, MediaFile, ScanProgress, ScanResult } from '../shared/types'
+import type { AppSettings, DeleteRequest, DeleteResult, ExportRow, FolderCandidate, MatchStrictness, MediaFile, ScanProgress, ScanResult } from '../shared/types'
 
 const VIDEO_EXTENSIONS = new Set(['.mkv', '.mp4', '.avi', '.mov', '.m4v', '.wmv', '.flv', '.webm'])
 const FINGERPRINT_CHUNK_SIZE = 64 * 1024
 const SETTINGS_FILE_NAME = 'settings.json'
 
 let mainWindow: BrowserWindow | null = null
+
+interface FolderStats {
+  path: string
+  rootPath: string
+  rootIndex: number
+  fileCount: number
+  videoCount: number
+  size: number
+  modifiedAt: number
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -98,6 +108,10 @@ function registerIpcHandlers(): void {
     return deleteFiles(request)
   })
 
+  ipcMain.handle('get-video-thumbnail', async (_event, filePath: string): Promise<string | undefined> => {
+    return getVideoThumbnail(filePath)
+  })
+
   ipcMain.handle('load-settings', async (): Promise<AppSettings> => {
     return loadSettings()
   })
@@ -117,39 +131,12 @@ async function scanFolders(folders: string[], strictness: MatchStrictness): Prom
   })
 
   const discovered: MediaFile[] = []
-  let filesScanned = 0
+  const folderStats = new Map<string, FolderStats>()
+  const counter = { filesScanned: 0 }
 
   for (let rootIndex = 0; rootIndex < uniqueFolders.length; rootIndex += 1) {
     const rootPath = uniqueFolders[rootIndex]
-    for await (const filePath of walkFiles(rootPath)) {
-      filesScanned += 1
-      if (filesScanned % 100 === 0) {
-        sendProgress({
-          phase: 'walking',
-          message: `${filesScanned.toLocaleString('de-DE')} Dateien geprüft...`,
-          currentPath: filePath,
-          processed: filesScanned
-        })
-      }
-
-      const extension = extname(filePath).toLowerCase()
-      if (!VIDEO_EXTENSIONS.has(extension)) continue
-
-      const stat = await fs.stat(filePath)
-      const folder = dirname(filePath)
-      discovered.push({
-        id: createHash('sha1').update(filePath).digest('hex'),
-        path: filePath,
-        name: basename(filePath),
-        folder,
-        rootPath,
-        rootIndex,
-        size: stat.size,
-        modifiedAt: stat.mtimeMs,
-        extension: extension.slice(1),
-        parsed: parseMediaName(basename(filePath), folder)
-      })
-    }
+    await collectFolder(rootPath, rootPath, rootIndex, discovered, folderStats, counter)
   }
 
   for (let index = 0; index < discovered.length; index += 1) {
@@ -173,6 +160,23 @@ async function scanFolders(folders: string[], strictness: MatchStrictness): Prom
   })
 
   const groups = buildDuplicateGroups(discovered, strictness)
+  const emptyFolderGroups = buildFolderCandidateGroups(
+    [...folderStats.values()]
+      .filter((folder) => folder.path !== folder.rootPath && folder.videoCount === 0)
+      .map((folder): FolderCandidate => ({
+        id: createHash('sha1').update(`folder:${folder.path}`).digest('hex'),
+        path: folder.path,
+        name: basename(folder.path),
+        parentPath: dirname(folder.path),
+        rootPath: folder.rootPath,
+        rootIndex: folder.rootIndex,
+        fileCount: folder.fileCount,
+        videoCount: folder.videoCount,
+        size: folder.size,
+        modifiedAt: folder.modifiedAt,
+        recommendation: 'delete'
+      }))
+  )
 
   sendProgress({
     phase: 'done',
@@ -182,30 +186,86 @@ async function scanFolders(folders: string[], strictness: MatchStrictness): Prom
   })
 
   return {
-    filesScanned,
+    filesScanned: counter.filesScanned,
     videosFound: discovered.length,
     folders: Array.from(new Set(discovered.map((file) => file.folder))).sort((a, b) => a.localeCompare(b, 'de')),
     extensions: Array.from(new Set(discovered.map((file) => file.extension))).sort((a, b) => a.localeCompare(b, 'de')),
-    groups
+    groups,
+    emptyFolderGroups
   }
 }
 
-async function* walkFiles(root: string): AsyncGenerator<string> {
+async function collectFolder(
+  folderPath: string,
+  rootPath: string,
+  rootIndex: number,
+  discovered: MediaFile[],
+  folderStats: Map<string, FolderStats>,
+  counter: { filesScanned: number }
+): Promise<FolderStats> {
+  const stats: FolderStats = {
+    path: folderPath,
+    rootPath,
+    rootIndex,
+    fileCount: 0,
+    videoCount: 0,
+    size: 0,
+    modifiedAt: 0
+  }
+
   let entries
   try {
-    entries = await fs.readdir(root, { withFileTypes: true })
+    entries = await fs.readdir(folderPath, { withFileTypes: true })
   } catch {
-    return
+    folderStats.set(folderPath, stats)
+    return stats
   }
 
   for (const entry of entries) {
-    const fullPath = join(root, entry.name)
+    const fullPath = join(folderPath, entry.name)
     if (entry.isDirectory()) {
-      yield* walkFiles(fullPath)
+      const child = await collectFolder(fullPath, rootPath, rootIndex, discovered, folderStats, counter)
+      stats.fileCount += child.fileCount
+      stats.videoCount += child.videoCount
+      stats.size += child.size
+      stats.modifiedAt = Math.max(stats.modifiedAt, child.modifiedAt)
     } else if (entry.isFile()) {
-      yield fullPath
+      counter.filesScanned += 1
+      if (counter.filesScanned % 100 === 0) {
+        sendProgress({
+          phase: 'walking',
+          message: `${counter.filesScanned.toLocaleString('de-DE')} Dateien geprüft...`,
+          currentPath: fullPath,
+          processed: counter.filesScanned
+        })
+      }
+
+      const stat = await fs.stat(fullPath)
+      const extension = extname(fullPath).toLowerCase()
+      stats.fileCount += 1
+      stats.size += stat.size
+      stats.modifiedAt = Math.max(stats.modifiedAt, stat.mtimeMs)
+
+      if (!VIDEO_EXTENSIONS.has(extension)) continue
+
+      stats.videoCount += 1
+      discovered.push({
+        id: createHash('sha1').update(fullPath).digest('hex'),
+        path: fullPath,
+        name: basename(fullPath),
+        folder: folderPath,
+        rootPath,
+        rootIndex,
+        size: stat.size,
+        modifiedAt: stat.mtimeMs,
+        extension: extension.slice(1),
+        parsed: parseMediaName(basename(fullPath), folderPath)
+      })
     }
   }
+
+  folderStats.set(folderPath, stats)
+  return stats
 }
 
 async function quickFingerprint(filePath: string, size: number): Promise<string | undefined> {
@@ -244,13 +304,22 @@ async function deleteFiles(request: DeleteRequest): Promise<DeleteResult> {
   const failed: DeleteResult['failed'] = []
 
   for (const target of request.targets) {
+    const kind = target.kind ?? 'file'
     try {
       if (request.mode === 'permanent') {
-        await fs.rm(target.path, { force: false })
+        await fs.rm(target.path, { force: false, recursive: kind === 'folder' })
       } else {
         await shell.trashItem(target.path)
       }
-      deleted.push({ id: target.id, path: target.path })
+      deleted.push({
+        id: target.id,
+        path: target.path,
+        name: target.name,
+        size: target.size,
+        kind,
+        mode: request.mode,
+        deletedAt: Date.now()
+      })
     } catch (error) {
       failed.push({
         id: target.id,
@@ -261,6 +330,16 @@ async function deleteFiles(request: DeleteRequest): Promise<DeleteResult> {
   }
 
   return { deleted, failed }
+}
+
+async function getVideoThumbnail(filePath: string): Promise<string | undefined> {
+  try {
+    const thumbnail = await nativeImage.createThumbnailFromPath(filePath, { width: 180, height: 104 })
+    if (thumbnail.isEmpty()) return undefined
+    return thumbnail.toDataURL()
+  } catch {
+    return undefined
+  }
 }
 
 async function loadSettings(): Promise<AppSettings> {
@@ -306,4 +385,5 @@ function confidenceLabel(confidence: string): string {
   if (confidence === 'likely') return 'Wahrscheinlich gleich'
   return 'Möglicher Treffer'
 }
+
 

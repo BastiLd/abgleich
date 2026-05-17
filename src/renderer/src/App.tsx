@@ -9,6 +9,8 @@
   Film,
   Folder,
   FolderPlus,
+  History,
+  Image,
   Play,
   RefreshCw,
   RotateCcw,
@@ -23,10 +25,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { defaultSettings } from '../../shared/settings'
 import { removeDeletedFilesFromResult } from '../../shared/resultState'
+import { normalizeFolderName, similarity } from '../../shared/matching'
 import type {
   AppSettings,
   DeleteMode,
   DeleteTarget,
+  FolderCandidate,
+  FolderCandidateGroup,
   DuplicateFile,
   DuplicateGroup,
   ExcludedFile,
@@ -66,6 +71,8 @@ function App(): JSX.Element {
   const [customPanelOpen, setCustomPanelOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [excludedOpen, setExcludedOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [folderMatchTab, setFolderMatchTab] = useState<MatchConfidence | 'all'>('all')
   const [deleteModal, setDeleteModal] = useState<DeleteModalState>(null)
   const [deleteConfirmed, setDeleteConfirmed] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -108,6 +115,10 @@ function App(): JSX.Element {
   }, [activeTab, excludedFileIds, excludedIds, result, selectedExtensions, selectedFolders])
 
   const { seriesBuckets, standaloneGroups } = useMemo(() => splitSeriesGroups(visibleGroups), [visibleGroups])
+  const emptyFolderGroups = useMemo(() => {
+    if (!result) return []
+    return folderMatchTab === 'all' ? result.emptyFolderGroups : result.emptyFolderGroups.filter((group) => group.confidence === folderMatchTab)
+  }, [folderMatchTab, result])
 
   const markedTargets = useMemo<DeleteTarget[]>(() => {
     return visibleGroups.flatMap((group) =>
@@ -211,14 +222,17 @@ function App(): JSX.Element {
       })
 
       if (deleteResult.deleted.length > 0) {
-        const deletedIds = new Set(deleteResult.deleted.map((file) => file.id))
-        setResult((current) => (current ? removeDeletedFilesFromResult(current, deletedIds) : current))
+        const deletedIds = new Set(deleteResult.deleted.filter((item) => item.kind === 'file').map((file) => file.id))
+        const deletedFolderPaths = new Set(deleteResult.deleted.filter((item) => item.kind === 'folder').map((file) => file.path))
+        setResult((current) => (current ? removeDeletedFilesFromResult(current, deletedIds, deletedFolderPaths) : current))
         setMarkedIds((current) => {
           const next = new Set(current)
           for (const id of deletedIds) next.delete(id)
           return next
         })
-        setDeleteNotice(`${deleteResult.deleted.length} Datei(en) entfernt. Du kannst jetzt optional neu scannen.`)
+        const nextHistory = [...deleteResult.deleted, ...settings.deleteHistory].slice(0, 100)
+        await updateSettings({ ...settings, deleteHistory: nextHistory })
+        setDeleteNotice(`${deleteResult.deleted.length} Element(e) entfernt. Du kannst jetzt optional neu scannen.`)
       }
 
       if (deleteResult.failed.length > 0) {
@@ -322,6 +336,11 @@ function App(): JSX.Element {
             <EyeOff size={18} />
             Ausgeschlossen
             {settings.excludedMatches.length + settings.excludedFiles.length > 0 && <span className="button-count">{settings.excludedMatches.length + settings.excludedFiles.length}</span>}
+          </button>
+          <button className="button secondary" onClick={() => setHistoryOpen(true)}>
+            <History size={18} />
+            Zuletzt gelöscht
+            {settings.deleteHistory.length > 0 && <span className="button-count">{settings.deleteHistory.length}</span>}
           </button>
           <button className="button secondary" onClick={() => setSettingsOpen(true)}>
             <Settings size={18} />
@@ -454,7 +473,7 @@ function App(): JSX.Element {
               <h2>Bereit für den ersten Scan</h2>
               <p>Die App scannt rekursiv Videodateien, vergleicht Namen und Teil-Fingerprints und zeigt danach Behalten-Vorschläge an.</p>
             </div>
-          ) : visibleGroups.length === 0 ? (
+          ) : visibleGroups.length === 0 && emptyFolderGroups.length === 0 ? (
             <div className="welcome">
               <Check size={44} />
               <h2>Keine Treffer in dieser Ansicht</h2>
@@ -462,30 +481,41 @@ function App(): JSX.Element {
             </div>
           ) : (
             <div className="group-list">
-              {seriesBuckets.map((bucket, index) => (
+              {visibleGroups.length > 0 && seriesBuckets.map((bucket, index) => (
                 <SeriesView
                   key={bucket.key}
                   bucket={bucket}
                   markedIds={markedIds}
                   onToggleMarked={toggleMarked}
                   onDeleteOne={(file) => requestDelete([{ id: file.id, path: file.path, name: file.name, size: file.size }], 'Datei löschen')}
+                  onDeleteFolders={(targets) => requestDelete(targets, 'Ordner löschen')}
                   onExcludeGroup={excludeGroup}
                   onExcludeFile={excludeFile}
                   index={index}
                 />
               ))}
-              {standaloneGroups.map((group, index) => (
+              {visibleGroups.length > 0 && standaloneGroups.map((group, index) => (
                 <DuplicateGroupView
                   key={group.id}
                   group={group}
                   markedIds={markedIds}
                   onToggleMarked={toggleMarked}
                   onDeleteOne={(file) => requestDelete([{ id: file.id, path: file.path, name: file.name, size: file.size }], 'Datei löschen')}
+                  onDeleteFolders={(targets) => requestDelete(targets, 'Ordner löschen')}
                   onExcludeFile={(file) => excludeFile(group, file)}
                   onExclude={() => excludeGroup(group)}
                   index={seriesBuckets.length + index}
                 />
               ))}
+              {result.emptyFolderGroups.length > 0 && (
+                <NoVideoFolderSection
+                  groups={emptyFolderGroups}
+                  allGroups={result.emptyFolderGroups}
+                  activeTab={folderMatchTab}
+                  onTabChange={setFolderMatchTab}
+                  onDelete={(targets) => requestDelete(targets, 'Ordner ohne Videos löschen')}
+                />
+              )}
             </div>
           )}
         </section>
@@ -493,6 +523,7 @@ function App(): JSX.Element {
 
       {settingsOpen && <SettingsModal settings={settings} onSave={updateSettings} onClose={() => setSettingsOpen(false)} />}
       {excludedOpen && <ExcludedModal2 excludedMatches={settings.excludedMatches} excludedFiles={settings.excludedFiles} onRestoreMatch={restoreExcluded} onRestoreFile={restoreExcludedFile} onClose={() => setExcludedOpen(false)} />}
+      {historyOpen && <DeleteHistoryModal history={settings.deleteHistory} onClose={() => setHistoryOpen(false)} />}
       {deleteModal && (
         <DeleteConfirmModal
           state={deleteModal}
@@ -624,11 +655,100 @@ function SummaryItem({ label, value }: { label: string; value: number }): JSX.El
   )
 }
 
+function NoVideoFolderSection({
+  groups,
+  allGroups,
+  activeTab,
+  onTabChange,
+  onDelete
+}: {
+  groups: FolderCandidateGroup[]
+  allGroups: FolderCandidateGroup[]
+  activeTab: MatchConfidence | 'all'
+  onTabChange: (tab: MatchConfidence | 'all') => void
+  onDelete: (targets: DeleteTarget[]) => void
+}): JSX.Element {
+  return (
+    <section className="empty-folder-section">
+      <header>
+        <div>
+          <h2>Ordner ohne Videos</h2>
+          <p>Ordnergruppen, in denen keine Videodateien erkannt wurden. Inhalte können trotzdem andere Dateien enthalten.</p>
+        </div>
+      </header>
+      <div className="folder-tabs">
+        {[
+          { value: 'all' as const, label: 'Alle' },
+          { value: 'safe' as const, label: 'Super sicher' },
+          { value: 'likely' as const, label: 'Sicher' },
+          { value: 'possible' as const, label: 'Unsicher' }
+        ].map((tab) => (
+          <button key={tab.value} className={activeTab === tab.value ? 'tab active' : 'tab'} onClick={() => onTabChange(tab.value)}>
+            {tab.label}
+            <span>{folderCountForTab(allGroups, tab.value)}</span>
+          </button>
+        ))}
+      </div>
+      {groups.length === 0 ? (
+        <div className="empty-state compact">Keine Ordner in dieser Sicherheitsstufe.</div>
+      ) : (
+        <div className="empty-folder-list">
+          {groups.map((group) => (
+            <NoVideoFolderGroup key={group.id} group={group} onDelete={onDelete} />
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function NoVideoFolderGroup({ group, onDelete }: { group: FolderCandidateGroup; onDelete: (targets: DeleteTarget[]) => void }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(group.folders.filter((folder) => folder.recommendation === 'delete').map((folder) => folder.id)))
+  const targets = group.folders.filter((folder) => selected.has(folder.id)).map(folderToDeleteTarget)
+
+  return (
+    <article className="empty-folder-group">
+      <button className="folder-group-header" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+        <span>{open ? <ChevronDown size={18} /> : <ChevronRight size={18} />}</span>
+        <div>
+          <h3>{group.title}</h3>
+          <p>{group.reason.join(' · ')}</p>
+        </div>
+        <div className={`confidence ${group.confidence}`}>
+          {folderConfidenceLabel(group.confidence)}
+          <strong>{group.score}%</strong>
+        </div>
+      </button>
+      <div className={open ? 'folder-candidate-list open' : 'folder-candidate-list'}>
+        {group.folders.map((folder) => (
+          <label key={folder.id} className={selected.has(folder.id) ? 'folder-candidate-row active' : 'folder-candidate-row'}>
+            <input type="checkbox" checked={selected.has(folder.id)} onChange={() => setSelected((current) => toggleSetValue(current, folder.id))} />
+            <span className={folder.recommendation === 'keep' ? 'folder-keep-badge' : 'folder-delete-badge'}>{folder.recommendation === 'keep' ? 'Behalten' : 'Löschen'}</span>
+            <div>
+              <strong>{folder.name}</strong>
+              <small>
+                {folder.fileCount} Datei(en), kein Video · {formatBytes(folder.size)}
+              </small>
+              <em>{folder.path}</em>
+            </div>
+          </label>
+        ))}
+        <button className="button danger folder-delete-button" onClick={() => onDelete(targets)} disabled={targets.length === 0}>
+          <Trash2 size={16} />
+          Ausgewählte Ordner löschen
+        </button>
+      </div>
+    </article>
+  )
+}
+
 function SeriesView({
   bucket,
   markedIds,
   onToggleMarked,
   onDeleteOne,
+  onDeleteFolders,
   onExcludeGroup,
   onExcludeFile,
   index
@@ -637,6 +757,7 @@ function SeriesView({
   markedIds: Set<string>
   onToggleMarked: (id: string) => void
   onDeleteOne: (file: DuplicateFile) => void
+  onDeleteFolders: (targets: DeleteTarget[]) => void
   onExcludeGroup: (group: VisibleGroup) => void
   onExcludeFile: (group: VisibleGroup, file: DuplicateFile) => void
   index: number
@@ -665,6 +786,7 @@ function SeriesView({
             markedIds={markedIds}
             onToggleMarked={onToggleMarked}
             onDeleteOne={onDeleteOne}
+            onDeleteFolders={onDeleteFolders}
             onExcludeGroup={onExcludeGroup}
             onExcludeFile={onExcludeFile}
           />
@@ -680,6 +802,7 @@ function SeasonView({
   markedIds,
   onToggleMarked,
   onDeleteOne,
+  onDeleteFolders,
   onExcludeGroup,
   onExcludeFile
 }: {
@@ -688,6 +811,7 @@ function SeasonView({
   markedIds: Set<string>
   onToggleMarked: (id: string) => void
   onDeleteOne: (file: DuplicateFile) => void
+  onDeleteFolders: (targets: DeleteTarget[]) => void
   onExcludeGroup: (group: VisibleGroup) => void
   onExcludeFile: (group: VisibleGroup, file: DuplicateFile) => void
 }): JSX.Element {
@@ -708,6 +832,7 @@ function SeasonView({
             markedIds={markedIds}
             onToggleMarked={onToggleMarked}
             onDeleteOne={onDeleteOne}
+            onDeleteFolders={onDeleteFolders}
             onExcludeFile={(file) => onExcludeFile(group, file)}
             onExclude={() => onExcludeGroup(group)}
             index={index}
@@ -723,6 +848,7 @@ function DuplicateGroupView({
   markedIds,
   onToggleMarked,
   onDeleteOne,
+  onDeleteFolders,
   onExcludeFile,
   onExclude,
   index
@@ -731,12 +857,21 @@ function DuplicateGroupView({
   markedIds: Set<string>
   onToggleMarked: (id: string) => void
   onDeleteOne: (file: DuplicateFile) => void
+  onDeleteFolders: (targets: DeleteTarget[]) => void
   onExcludeFile: (file: DuplicateFile) => void
   onExclude: () => void
   index: number
 }): JSX.Element {
   const [open, setOpen] = useState(false)
   const [showFullPaths, setShowFullPaths] = useState(false)
+  const [showFolderTargets, setShowFolderTargets] = useState(false)
+  const folderTargets = useMemo(() => buildMediaFolderTargets(group), [group])
+  const [selectedFolderTargets, setSelectedFolderTargets] = useState<Set<string>>(() => new Set(folderTargets.filter((target) => target.autoSelected).map((target) => target.id)))
+  const selectedFolderDeleteTargets = folderTargets.filter((target) => selectedFolderTargets.has(target.id)).map((target) => target.target)
+
+  function toggleFolderTarget(id: string): void {
+    setSelectedFolderTargets((current) => toggleSetValue(current, id))
+  }
 
   return (
     <article className="group" style={{ animationDelay: `${Math.min(index * 45, 360)}ms` }}>
@@ -760,30 +895,50 @@ function DuplicateGroupView({
             {showFullPaths ? <EyeOff size={16} /> : <Eye size={16} />}
             {showFullPaths ? 'Pfade einklappen' : 'Ganze Pfade anzeigen'}
           </button>
+          <button onClick={() => setShowFolderTargets((value) => !value)} disabled={folderTargets.length === 0}>
+            <Folder size={16} />
+            Ordner löschen
+          </button>
           <button onClick={onExclude}>
             <EyeOff size={16} />
             Falsch erkannt
           </button>
         </div>
 
+        {showFolderTargets && (
+          <div className="folder-delete-panel">
+            <div>
+              <strong>Ordner zu diesem Treffer</strong>
+              <span>Automatisch angehakt, wenn der Ordnername gut zur Datei oder Gruppe passt. Du kannst alles ändern.</span>
+            </div>
+            {folderTargets.length === 0 ? (
+              <p>Kein sicherer Unterordner gefunden. Quellordner werden hier nicht vorgeschlagen.</p>
+            ) : (
+              <>
+                <div className="folder-delete-list">
+                  {folderTargets.map((item) => (
+                    <label key={item.id} className={selectedFolderTargets.has(item.id) ? 'folder-delete-row active' : 'folder-delete-row'}>
+                      <input type="checkbox" checked={selectedFolderTargets.has(item.id)} onChange={() => toggleFolderTarget(item.id)} />
+                      <span>
+                        <strong>{item.target.name}</strong>
+                        <small>{item.reason}</small>
+                        <em>{item.target.path}</em>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <button className="button danger folder-delete-button" onClick={() => onDeleteFolders(selectedFolderDeleteTargets)} disabled={selectedFolderDeleteTargets.length === 0}>
+                  <Trash2 size={16} />
+                  Ausgewählte Ordner löschen
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         {group.files.map((file) => (
           <div key={file.id} className={file.recommendation === 'keep' ? 'file-row keep' : 'file-row duplicate'}>
-            <div className="file-action">
-              <div className="duplicate-actions">
-                <label className="mark-toggle" onClick={(event) => event.stopPropagation()}>
-                  <input type="checkbox" checked={markedIds.has(file.id)} onChange={() => onToggleMarked(file.id)} />
-                  Zum Löschen markieren
-                </label>
-                <button className="mini-danger" onClick={() => onDeleteOne(file)} title="Diese Datei löschen">
-                  <Trash2 size={15} />
-                  Löschen
-                </button>
-                <button className="mini-secondary" onClick={() => onExcludeFile(file)} title="Diese Datei als falsch erkannt ausblenden">
-                  <EyeOff size={15} />
-                  Falsch
-                </button>
-              </div>
-            </div>
+            <VideoThumbnail file={file} />
             <div className={showFullPaths ? 'file-main full-path' : 'file-main'}>
               <strong title={file.name}>{file.name}</strong>
               <span title={file.path}>{file.path}</span>
@@ -793,10 +948,55 @@ function DuplicateGroupView({
               <span>{file.parsed.qualityLabel ?? 'Qualität unbekannt'}</span>
               <span>{new Date(file.modifiedAt).toLocaleDateString('de-DE')}</span>
             </div>
+            <div className="file-action">
+              <label className="mark-toggle" onClick={(event) => event.stopPropagation()}>
+                <input type="checkbox" checked={markedIds.has(file.id)} onChange={() => onToggleMarked(file.id)} />
+                Markieren
+              </label>
+              <button className="mini-danger" onClick={() => onDeleteOne(file)} title="Diese Datei löschen">
+                <Trash2 size={15} />
+                Löschen
+              </button>
+              <button className="mini-secondary" onClick={() => onExcludeFile(file)} title="Diese Datei als falsch erkannt ausblenden">
+                <EyeOff size={15} />
+                Falsch
+              </button>
+            </div>
           </div>
         ))}
       </div>
     </article>
+  )
+}
+
+function VideoThumbnail({ file }: { file: DuplicateFile }): JSX.Element {
+  const [src, setSrc] = useState<string | undefined>()
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    let canceled = false
+    setLoaded(false)
+    void window.mediaApi.getVideoThumbnail(file.path).then((thumbnail) => {
+      if (canceled) return
+      setSrc(thumbnail)
+      setLoaded(true)
+    })
+    return () => {
+      canceled = true
+    }
+  }, [file.path])
+
+  return (
+    <div className="video-thumb">
+      {src ? (
+        <img src={src} alt="" />
+      ) : (
+        <div className={loaded ? 'thumb-fallback ready' : 'thumb-fallback'}>
+          {loaded ? <Film size={24} /> : <Image size={24} />}
+          <span>.{file.extension}</span>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -982,6 +1182,42 @@ function ExcludedModal2({
   )
 }
 
+function DeleteHistoryModal({ history, onClose }: { history: AppSettings['deleteHistory']; onClose: () => void }): JSX.Element {
+  return (
+    <div className="modal-backdrop">
+      <section className="modal history-modal">
+        <header className="modal-header">
+          <div>
+            <h2>Zuletzt gelöscht</h2>
+            <p>Lokaler Verlauf der letzten Löschaktionen. Papierkorb-Einträge sind normalerweise wiederherstellbar.</p>
+          </div>
+          <button className="icon-button" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </header>
+        <div className="history-list">
+          {history.length === 0 ? (
+            <div className="empty-state compact">Noch nichts über diese App gelöscht.</div>
+          ) : (
+            history.map((item) => (
+              <article key={`${item.id}-${item.deletedAt}`} className="history-item">
+                <div className={item.kind === 'folder' ? 'history-kind folder' : 'history-kind file'}>{item.kind === 'folder' ? <Folder size={18} /> : <Film size={18} />}</div>
+                <div>
+                  <strong>{item.name}</strong>
+                  <span>
+                    {item.kind === 'folder' ? 'Ordner' : 'Datei'} · {item.mode === 'trash' ? 'Papierkorb' : 'Endgültig'} · {new Date(item.deletedAt).toLocaleString('de-DE')}
+                  </span>
+                  <small>{item.path}</small>
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+    </div>
+  )
+}
+
 function DeleteConfirmModal({
   state,
   mode,
@@ -999,7 +1235,9 @@ function DeleteConfirmModal({
   onCancel: () => void
   onDelete: () => void
 }): JSX.Element {
-  const totalSize = state.targets.reduce((sum, target) => sum + target.size, 0)
+  const totalSize = state.targets.filter((target) => (target.kind ?? 'file') === 'file').reduce((sum, target) => sum + target.size, 0)
+  const folderCount = state.targets.filter((target) => target.kind === 'folder').length
+  const fileCount = state.targets.length - folderCount
 
   return (
     <div className="modal-backdrop">
@@ -1008,7 +1246,7 @@ function DeleteConfirmModal({
           <div>
             <h2>{state.title}</h2>
             <p>
-              {state.targets.length} Datei(en), {formatBytes(totalSize)} · {mode === 'trash' ? 'Papierkorb' : 'endgültig löschen'}
+              {fileCount} Datei(en), {folderCount} Ordner · {formatBytes(totalSize)} · {mode === 'trash' ? 'Papierkorb' : 'endgültig löschen'}
             </p>
           </div>
           <AlertTriangle size={34} />
@@ -1017,7 +1255,7 @@ function DeleteConfirmModal({
         <div className="delete-preview full">
           {state.targets.map((target) => (
             <div key={target.id}>
-              <strong>{target.name}</strong>
+              <strong>{target.kind === 'folder' ? 'Ordner: ' : 'Datei: '}{target.name}</strong>
               <span>{target.path}</span>
             </div>
           ))}
@@ -1201,6 +1439,67 @@ function splitSeriesGroups(groups: VisibleGroup[]): { seriesBuckets: SeriesBucke
     seriesBuckets: seriesBuckets.sort((a, b) => a.title.localeCompare(b.title, 'de')),
     standaloneGroups
   }
+}
+
+function buildMediaFolderTargets(group: VisibleGroup): Array<{ id: string; target: DeleteTarget; autoSelected: boolean; reason: string }> {
+  const targets = new Map<string, { id: string; target: DeleteTarget; autoSelected: boolean; reason: string }>()
+  for (const file of group.files) {
+    if (normalizePath(file.folder) === normalizePath(file.rootPath)) continue
+
+    const folderName = basenameFromPath(file.folder)
+    const folderText = normalizeFolderName(folderName)
+    const titleScore = Math.max(
+      similarity(folderText, normalizeFolderName(group.title)),
+      similarity(folderText, file.parsed.comparableTitle),
+      similarity(folderText, file.parsed.seriesTitle ? normalizeFolderName(file.parsed.seriesTitle) : '')
+    )
+    const autoSelected = titleScore >= 0.72
+    const id = `folder:${file.folder}`
+    const existing = targets.get(id)
+    const item = {
+      id,
+      target: {
+        id,
+        path: file.folder,
+        name: folderName,
+        size: 0,
+        kind: 'folder' as const
+      },
+      autoSelected,
+      reason: autoSelected ? `Automatisch angehakt · Namensähnlichkeit ${Math.round(titleScore * 100)}%` : `Manuell wählbar · Namensähnlichkeit ${Math.round(titleScore * 100)}%`
+    }
+    if (!existing || (item.autoSelected && !existing.autoSelected)) targets.set(id, item)
+  }
+  return [...targets.values()].sort((a, b) => Number(b.autoSelected) - Number(a.autoSelected) || a.target.path.localeCompare(b.target.path, 'de'))
+}
+
+function folderToDeleteTarget(folder: FolderCandidate): DeleteTarget {
+  return {
+    id: folder.id,
+    path: folder.path,
+    name: folder.name,
+    size: folder.size,
+    kind: 'folder'
+  }
+}
+
+function folderCountForTab(groups: FolderCandidateGroup[], tab: MatchConfidence | 'all'): number {
+  if (tab === 'all') return groups.length
+  return groups.filter((group) => group.confidence === tab).length
+}
+
+function folderConfidenceLabel(confidence: MatchConfidence): string {
+  if (confidence === 'safe') return 'Super sicher'
+  if (confidence === 'likely') return 'Sicher'
+  return 'Unsicher'
+}
+
+function basenameFromPath(path: string): string {
+  return path.replace(/[\\/]+$/g, '').split(/[\\/]/).pop() ?? path
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\//g, '\\').replace(/\\+$/g, '').toLowerCase()
 }
 
 export default App

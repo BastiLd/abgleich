@@ -14,6 +14,7 @@ describe('settings defaults', () => {
     })
     expect(defaultSettings.excludedMatches).toEqual([])
     expect(defaultSettings.excludedFiles).toEqual([])
+    expect(defaultSettings.deleteHistory).toEqual([])
   })
 
   it('normalisiert kaputte gespeicherte Werte', () => {
@@ -24,7 +25,8 @@ describe('settings defaults', () => {
         mascot: false
       },
       excludedMatches: [],
-      excludedFiles: []
+      excludedFiles: [],
+      deleteHistory: []
     })
   })
 })

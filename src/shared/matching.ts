@@ -1,4 +1,4 @@
-﻿import type { DuplicateGroup, MatchConfidence, MatchStrictness, MediaFile, ParsedMediaName } from './types'
+﻿import type { DuplicateGroup, FolderCandidate, FolderCandidateGroup, MatchConfidence, MatchStrictness, MediaFile, ParsedMediaName } from './types'
 
 const CLUTTER_WORDS = new Set([
   '2160p',
@@ -177,6 +177,72 @@ export function buildDuplicateGroups(files: MediaFile[], strictness: MatchStrict
   return result.sort((a, b) => confidenceWeight(b.confidence) - confidenceWeight(a.confidence) || b.score - a.score)
 }
 
+export function buildFolderCandidateGroups(folders: FolderCandidate[]): FolderCandidateGroup[] {
+  const parent = new Map<string, string>()
+  const matches = new Map<string, { confidence: MatchConfidence; score: number; reason: string[] }>()
+
+  for (const folder of folders) parent.set(folder.id, folder.id)
+
+  for (const [leftIndex, rightIndex] of folderCandidatePairs(folders)) {
+    const left = folders[leftIndex]
+    const right = folders[rightIndex]
+    if (left.path === right.path) continue
+
+    const score = Math.round(similarity(normalizeFolderName(left.name), normalizeFolderName(right.name)) * 100)
+    if (score < 68) continue
+    if (left.rootIndex === right.rootIndex && score < 92) continue
+
+    const confidence = score >= 94 ? 'safe' : score >= 82 ? 'likely' : 'possible'
+    const reason = confidence === 'safe' ? ['Ordnername praktisch gleich'] : confidence === 'likely' ? ['Ordnername sehr ähnlich'] : ['Ordnername möglicherweise ähnlich']
+    union(parent, left.id, right.id)
+    matches.set(edgeKey(left.id, right.id), { confidence, score, reason })
+  }
+
+  const grouped = new Map<string, FolderCandidate[]>()
+  for (const folder of folders) {
+    const root = find(parent, folder.id)
+    const bucket = grouped.get(root) ?? []
+    bucket.push(folder)
+    grouped.set(root, bucket)
+  }
+
+  const result: FolderCandidateGroup[] = []
+  for (const groupFolders of grouped.values()) {
+    if (groupFolders.length < 2) continue
+
+    const pairMatches = collectFolderMatches(groupFolders, matches)
+    if (pairMatches.length === 0) continue
+
+    const score = Math.round(pairMatches.reduce((sum, item) => sum + item.score, 0) / pairMatches.length)
+    const confidence = score >= 94 ? 'safe' : score >= 82 ? 'likely' : 'possible'
+    const keep = chooseKeepFolder(groupFolders)
+    const title = titleCase(normalizeFolderName(keep.name) || keep.name)
+
+    result.push({
+      id: groupFolders.map((folder) => folder.id).sort().join('|'),
+      confidence,
+      score,
+      title,
+      reason: Array.from(new Set(pairMatches.flatMap((item) => item.reason))).slice(0, 3),
+      keepId: keep.id,
+      folders: groupFolders
+        .slice()
+        .sort((a, b) => {
+          if (a.id === keep.id) return -1
+          if (b.id === keep.id) return 1
+          if (a.rootIndex !== b.rootIndex) return a.rootIndex - b.rootIndex
+          return a.path.localeCompare(b.path, 'de')
+        })
+        .map((folder) => ({
+          ...folder,
+          recommendation: folder.id === keep.id ? 'keep' : 'delete'
+        }))
+    })
+  }
+
+  return result.sort((a, b) => confidenceWeight(b.confidence) - confidenceWeight(a.confidence) || b.score - a.score)
+}
+
 export function compareMedia(
   left: MediaFile,
   right: MediaFile,
@@ -328,6 +394,44 @@ function candidateKeys(file: MediaFile): string[] {
   return [...keys]
 }
 
+function folderCandidatePairs(folders: FolderCandidate[]): Array<[number, number]> {
+  const buckets = new Map<string, number[]>()
+
+  folders.forEach((folder, index) => {
+    const normalized = normalizeFolderName(folder.name)
+    const tokens = normalized.split(/\s+/).filter((token) => token.length >= 3)
+    const keys = new Set<string>()
+    const firstTwo = tokens.slice(0, 2).join(' ')
+    const longest = tokens.slice().sort((a, b) => b.length - a.length)[0]
+    const prefix = normalized.replace(/\s+/g, '').slice(0, 10)
+
+    if (firstTwo) keys.add(`title:${firstTwo}`)
+    if (longest && longest.length >= 5) keys.add(`token:${longest}`)
+    if (prefix.length >= 6) keys.add(`prefix:${prefix}`)
+
+    for (const key of keys) {
+      const bucket = buckets.get(key) ?? []
+      bucket.push(index)
+      buckets.set(key, bucket)
+    }
+  })
+
+  const pairs = new Set<string>()
+  for (const bucket of buckets.values()) {
+    if (bucket.length < 2 || bucket.length > 1500) continue
+    for (let i = 0; i < bucket.length; i += 1) {
+      for (let j = i + 1; j < bucket.length; j += 1) {
+        pairs.add(`${bucket[i]}:${bucket[j]}`)
+      }
+    }
+  }
+
+  return [...pairs].map((pair) => {
+    const [left, right] = pair.split(':').map(Number)
+    return [left, right]
+  })
+}
+
 function detectEpisode(text: string): { season: number; episode: number } | undefined {
   const patterns = [
     /\bs(\d{1,2})\s*e(\d{1,3})\b/i,
@@ -349,7 +453,7 @@ function detectYear(text: string): number | undefined {
   return match ? Number(match[1]) : undefined
 }
 
-function similarity(left: string, right: string): number {
+export function similarity(left: string, right: string): number {
   if (left === right) return 1
   if (!left || !right) return 0
 
@@ -361,6 +465,16 @@ function similarity(left: string, right: string): number {
   const distanceScore = 1 - levenshtein(left, right) / Math.max(left.length, right.length)
 
   return Math.max(tokenScore, distanceScore * 0.92 + tokenScore * 0.08)
+}
+
+export function normalizeFolderName(name: string): string {
+  return normalizeMediaText(name)
+    .replace(/\b(19|20)\d{2}\b/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((word) => !CLUTTER_WORDS.has(word))
+    .join(' ')
+    .trim()
 }
 
 function sizeSimilarity(left: number, right: number): number {
@@ -424,6 +538,28 @@ function collectPairMatches(
   return matches
 }
 
+function collectFolderMatches(
+  folders: FolderCandidate[],
+  matches: Map<string, { confidence: MatchConfidence; score: number; reason: string[] }>
+): Array<{ confidence: MatchConfidence; score: number; reason: string[] }> {
+  const result: Array<{ confidence: MatchConfidence; score: number; reason: string[] }> = []
+  for (let i = 0; i < folders.length; i += 1) {
+    for (let j = i + 1; j < folders.length; j += 1) {
+      const match = matches.get(edgeKey(folders[i].id, folders[j].id))
+      if (match) result.push(match)
+    }
+  }
+  return result
+}
+
+function chooseKeepFolder(folders: FolderCandidate[]): FolderCandidate {
+  return folders.slice().sort((a, b) => {
+    if (a.rootIndex !== b.rootIndex) return a.rootIndex - b.rootIndex
+    if (a.size !== b.size) return b.size - a.size
+    return b.modifiedAt - a.modifiedAt
+  })[0]
+}
+
 function edgeKey(left: string, right: string): string {
   return [left, right].sort().join('::')
 }
@@ -458,4 +594,5 @@ function titleCase(text: string): string {
 function pad2(value: number): string {
   return value.toString().padStart(2, '0')
 }
+
 
