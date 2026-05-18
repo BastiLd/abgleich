@@ -15,7 +15,7 @@ Portable Windows-App zum Finden doppelter Filme und Serienfolgen.
 - Pro Datei markieren, löschen oder als falsch erkannt ausblenden
 - Passende Medienordner manuell oder automatisch markieren und löschen
 - Gruppen komplett als falsch erkannt ausblenden und später wiederherstellen
-- Ordner ohne erkannte Videos als eigene Trefferabteilung prüfen und löschen
+- Ordner ohne erkannte Videos über eigenen Ergebnis-Tab prüfen, ausblenden und löschen
 - Verlauf der zuletzt gelöschten Dateien und Ordner
 - Filter oben nach Ordner, Video-Typen oder eigener Auswahl
 - Einklappbare Ordner-, Staffel-, Folgen- und Trefferbereiche

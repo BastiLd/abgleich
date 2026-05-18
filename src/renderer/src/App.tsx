@@ -45,6 +45,7 @@ import type {
 } from '../../shared/types'
 
 type FilterMode = 'folder' | 'video' | 'custom'
+type ResultTab = MatchConfidence | 'all' | 'noVideoFolders'
 type VisibleGroup = Omit<DuplicateGroup, 'files'> & { files: DuplicateFile[] }
 type DeleteModalState = { targets: DeleteTarget[]; title: string } | null
 type SeriesBucket = {
@@ -53,16 +54,17 @@ type SeriesBucket = {
   seasons: Array<{ season: number; groups: VisibleGroup[] }>
 }
 
-const TABS: Array<{ value: MatchConfidence | 'all'; label: string }> = [
+const TABS: Array<{ value: ResultTab; label: string }> = [
   { value: 'all', label: 'Alle' },
   { value: 'safe', label: 'Sicher gleich' },
   { value: 'likely', label: 'Wahrscheinlich gleich' },
-  { value: 'possible', label: 'Mögliche Treffer' }
+  { value: 'possible', label: 'Mögliche Treffer' },
+  { value: 'noVideoFolders', label: 'Ordner ohne Videos' }
 ]
 
 function App(): JSX.Element {
   const [folders, setFolders] = useState<string[]>([])
-  const [activeTab, setActiveTab] = useState<MatchConfidence | 'all'>('all')
+  const [activeTab, setActiveTab] = useState<ResultTab>('all')
   const [filterMode, setFilterMode] = useState<FilterMode>('folder')
   const [selectedFolders, setSelectedFolders] = useState<Set<string>>(new Set())
   const [selectedExtensions, setSelectedExtensions] = useState<Set<string>>(new Set())
@@ -102,6 +104,7 @@ function App(): JSX.Element {
 
   const visibleGroups = useMemo<VisibleGroup[]>(() => {
     if (!result) return []
+    if (activeTab === 'noVideoFolders') return []
 
     const confidenceFiltered = activeTab === 'all' ? result.groups : result.groups.filter((group) => group.confidence === activeTab)
 
@@ -117,8 +120,9 @@ function App(): JSX.Element {
   const { seriesBuckets, standaloneGroups } = useMemo(() => splitSeriesGroups(visibleGroups), [visibleGroups])
   const emptyFolderGroups = useMemo(() => {
     if (!result) return []
-    return folderMatchTab === 'all' ? result.emptyFolderGroups : result.emptyFolderGroups.filter((group) => group.confidence === folderMatchTab)
-  }, [folderMatchTab, result])
+    if (activeTab !== 'noVideoFolders') return []
+    return (folderMatchTab === 'all' ? result.emptyFolderGroups : result.emptyFolderGroups.filter((group) => group.confidence === folderMatchTab)).filter((group) => !excludedIds.has(group.id))
+  }, [activeTab, excludedIds, folderMatchTab, result])
 
   const markedTargets = useMemo<DeleteTarget[]>(() => {
     return visibleGroups.flatMap((group) =>
@@ -317,6 +321,19 @@ function App(): JSX.Element {
     })
   }
 
+  async function excludeFolderGroup(group: FolderCandidateGroup): Promise<void> {
+    const nextMatch: ExcludedMatch = {
+      id: group.id,
+      title: `Ordner ohne Videos: ${group.title}`,
+      filePaths: group.folders.map((folder) => folder.path),
+      createdAt: Date.now()
+    }
+    await updateSettings({
+      ...settings,
+      excludedMatches: [...settings.excludedMatches.filter((match) => match.id !== group.id), nextMatch]
+    })
+  }
+
   const progressPercent = progress.total ? Math.min(100, Math.round((progress.processed / progress.total) * 100)) : isScanning ? 14 : 0
 
   return (
@@ -438,7 +455,11 @@ function App(): JSX.Element {
               {TABS.map((tab) => (
                 <button key={tab.value} className={activeTab === tab.value ? 'tab active' : 'tab'} onClick={() => setActiveTab(tab.value)} role="tab" aria-selected={activeTab === tab.value}>
                   {tab.label}
-                  <span>{countForTab(result?.groups.filter((group) => !excludedIds.has(group.id)) ?? [], tab.value)}</span>
+                  <span>
+                    {tab.value === 'noVideoFolders'
+                      ? result?.emptyFolderGroups.filter((group) => !excludedIds.has(group.id)).length ?? 0
+                      : countForTab(result?.groups.filter((group) => !excludedIds.has(group.id)) ?? [], tab.value)}
+                  </span>
                 </button>
               ))}
             </div>
@@ -507,13 +528,14 @@ function App(): JSX.Element {
                   index={seriesBuckets.length + index}
                 />
               ))}
-              {result.emptyFolderGroups.length > 0 && (
+              {activeTab === 'noVideoFolders' && (
                 <NoVideoFolderSection
                   groups={emptyFolderGroups}
-                  allGroups={result.emptyFolderGroups}
+                  allGroups={result.emptyFolderGroups.filter((group) => !excludedIds.has(group.id))}
                   activeTab={folderMatchTab}
                   onTabChange={setFolderMatchTab}
                   onDelete={(targets) => requestDelete(targets, 'Ordner ohne Videos löschen')}
+                  onExclude={excludeFolderGroup}
                 />
               )}
             </div>
@@ -660,13 +682,15 @@ function NoVideoFolderSection({
   allGroups,
   activeTab,
   onTabChange,
-  onDelete
+  onDelete,
+  onExclude
 }: {
   groups: FolderCandidateGroup[]
   allGroups: FolderCandidateGroup[]
   activeTab: MatchConfidence | 'all'
   onTabChange: (tab: MatchConfidence | 'all') => void
   onDelete: (targets: DeleteTarget[]) => void
+  onExclude: (group: FolderCandidateGroup) => void
 }): JSX.Element {
   return (
     <section className="empty-folder-section">
@@ -694,7 +718,7 @@ function NoVideoFolderSection({
       ) : (
         <div className="empty-folder-list">
           {groups.map((group) => (
-            <NoVideoFolderGroup key={group.id} group={group} onDelete={onDelete} />
+            <NoVideoFolderGroup key={group.id} group={group} onDelete={onDelete} onExclude={onExclude} />
           ))}
         </div>
       )}
@@ -702,7 +726,7 @@ function NoVideoFolderSection({
   )
 }
 
-function NoVideoFolderGroup({ group, onDelete }: { group: FolderCandidateGroup; onDelete: (targets: DeleteTarget[]) => void }): JSX.Element {
+function NoVideoFolderGroup({ group, onDelete, onExclude }: { group: FolderCandidateGroup; onDelete: (targets: DeleteTarget[]) => void; onExclude: (group: FolderCandidateGroup) => void }): JSX.Element {
   const [open, setOpen] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(() => new Set(group.folders.filter((folder) => folder.recommendation === 'delete').map((folder) => folder.id)))
   const targets = group.folders.filter((folder) => selected.has(folder.id)).map(folderToDeleteTarget)
@@ -737,6 +761,10 @@ function NoVideoFolderGroup({ group, onDelete }: { group: FolderCandidateGroup; 
         <button className="button danger folder-delete-button" onClick={() => onDelete(targets)} disabled={targets.length === 0}>
           <Trash2 size={16} />
           Ausgewählte Ordner löschen
+        </button>
+        <button className="button secondary folder-exclude-button" onClick={() => onExclude(group)}>
+          <EyeOff size={16} />
+          Falsch erkannt
         </button>
       </div>
     </article>

@@ -160,22 +160,24 @@ async function scanFolders(folders: string[], strictness: MatchStrictness): Prom
   })
 
   const groups = buildDuplicateGroups(discovered, strictness)
-  const emptyFolderGroups = buildFolderCandidateGroups(
-    [...folderStats.values()]
-      .filter((folder) => folder.path !== folder.rootPath && folder.videoCount === 0)
-      .map((folder): FolderCandidate => ({
-        id: createHash('sha1').update(`folder:${folder.path}`).digest('hex'),
-        path: folder.path,
-        name: basename(folder.path),
-        parentPath: dirname(folder.path),
-        rootPath: folder.rootPath,
-        rootIndex: folder.rootIndex,
-        fileCount: folder.fileCount,
-        videoCount: folder.videoCount,
-        size: folder.size,
-        modifiedAt: folder.modifiedAt,
-        recommendation: 'delete'
-      }))
+  const noVideoFolders = [...folderStats.values()]
+    .filter((folder) => folder.path !== folder.rootPath && folder.fileCount > 0 && folder.videoCount === 0)
+    .map(folderStatsToCandidate)
+  const duplicateNoVideoFolderGroups = buildFolderCandidateGroups(noVideoFolders)
+  const groupedFolderIds = new Set(duplicateNoVideoFolderGroups.flatMap((group) => group.folders.map((folder) => folder.id)))
+  const singleNoVideoFolderGroups = noVideoFolders
+    .filter((folder) => !groupedFolderIds.has(folder.id))
+    .map((folder) => ({
+      id: folder.id,
+      confidence: 'possible' as const,
+      score: 0,
+      title: folder.name,
+      reason: ['Keine Videodatei erkannt'],
+      keepId: '',
+      folders: [{ ...folder, recommendation: 'delete' as const }]
+    }))
+  const emptyFolderGroups = [...duplicateNoVideoFolderGroups, ...singleNoVideoFolderGroups].sort(
+    (a, b) => folderConfidenceWeight(b.confidence) - folderConfidenceWeight(a.confidence) || b.score - a.score || a.title.localeCompare(b.title, 'de')
   )
 
   sendProgress({
@@ -266,6 +268,28 @@ async function collectFolder(
 
   folderStats.set(folderPath, stats)
   return stats
+}
+
+function folderStatsToCandidate(folder: FolderStats): FolderCandidate {
+  return {
+    id: createHash('sha1').update(`folder:${folder.path}`).digest('hex'),
+    path: folder.path,
+    name: basename(folder.path),
+    parentPath: dirname(folder.path),
+    rootPath: folder.rootPath,
+    rootIndex: folder.rootIndex,
+    fileCount: folder.fileCount,
+    videoCount: folder.videoCount,
+    size: folder.size,
+    modifiedAt: folder.modifiedAt,
+    recommendation: 'delete'
+  }
+}
+
+function folderConfidenceWeight(confidence: string): number {
+  if (confidence === 'safe') return 3
+  if (confidence === 'likely') return 2
+  return 1
 }
 
 async function quickFingerprint(filePath: string, size: number): Promise<string | undefined> {
