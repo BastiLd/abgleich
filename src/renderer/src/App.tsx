@@ -4,6 +4,7 @@
   ChevronDown,
   ChevronRight,
   Download,
+  ExternalLink,
   Eye,
   EyeOff,
   Film,
@@ -14,6 +15,7 @@
   Play,
   RefreshCw,
   RotateCcw,
+  Search,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
@@ -48,6 +50,7 @@ type FilterMode = 'folder' | 'video' | 'custom'
 type ResultTab = MatchConfidence | 'all' | 'noVideoFolders'
 type VisibleGroup = Omit<DuplicateGroup, 'files'> & { files: DuplicateFile[] }
 type DeleteModalState = { targets: DeleteTarget[]; title: string } | null
+type FolderSearchItem = { path: string; name: string; type: 'Quelle' | 'Video-Ordner' | 'Ordner ohne Videos' }
 type SeriesBucket = {
   key: string
   title: string
@@ -75,6 +78,7 @@ function App(): JSX.Element {
   const [excludedOpen, setExcludedOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [folderMatchTab, setFolderMatchTab] = useState<MatchConfidence | 'all'>('all')
+  const [folderSearch, setFolderSearch] = useState('')
   const [deleteModal, setDeleteModal] = useState<DeleteModalState>(null)
   const [deleteConfirmed, setDeleteConfirmed] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -118,6 +122,8 @@ function App(): JSX.Element {
   }, [activeTab, excludedFileIds, excludedIds, result, selectedExtensions, selectedFolders])
 
   const { seriesBuckets, standaloneGroups } = useMemo(() => splitSeriesGroups(visibleGroups), [visibleGroups])
+  const folderSearchItems = useMemo(() => buildFolderSearchItems(folders, result), [folders, result])
+  const folderSearchResults = useMemo(() => filterFolderSearchItems(folderSearchItems, folderSearch), [folderSearchItems, folderSearch])
   const emptyFolderGroups = useMemo(() => {
     if (!result) return []
     if (activeTab !== 'noVideoFolders') return []
@@ -334,6 +340,14 @@ function App(): JSX.Element {
     })
   }
 
+  async function openFolderInExplorer(path: string): Promise<void> {
+    setError(null)
+    const openResult = await window.mediaApi.openPathInExplorer(path)
+    if (!openResult.ok) {
+      setError(`Ordner konnte nicht im Explorer geöffnet werden: ${openResult.error ?? path}`)
+    }
+  }
+
   const progressPercent = progress.total ? Math.min(100, Math.round((progress.processed / progress.total) * 100)) : isScanning ? 14 : 0
 
   return (
@@ -449,6 +463,14 @@ function App(): JSX.Element {
               onSetAllExtensions={setAllExtensions}
             />
           </section>
+
+          <FolderSearch
+            query={folderSearch}
+            results={folderSearchResults}
+            totalCount={folderSearchItems.length}
+            onQueryChange={setFolderSearch}
+            onOpenFolder={openFolderInExplorer}
+          />
 
           <div className="toolbar">
             <div className="tabs" role="tablist" aria-label="Treffer filtern">
@@ -674,6 +696,59 @@ function SummaryItem({ label, value }: { label: string; value: number }): JSX.El
       <strong>{value.toLocaleString('de-DE')}</strong>
       <span>{label}</span>
     </div>
+  )
+}
+
+function FolderSearch({
+  query,
+  results,
+  totalCount,
+  onQueryChange,
+  onOpenFolder
+}: {
+  query: string
+  results: FolderSearchItem[]
+  totalCount: number
+  onQueryChange: (query: string) => void
+  onOpenFolder: (path: string) => void
+}): JSX.Element {
+  const trimmed = query.trim()
+
+  return (
+    <section className="folder-search">
+      <label className="folder-search-input">
+        <Search size={18} />
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => onQueryChange(event.currentTarget.value)}
+          placeholder="Ordner nach Film, Serie oder Pfad suchen..."
+        />
+      </label>
+      <span className="folder-search-count">{trimmed ? `${results.length}/${totalCount} Treffer` : `${totalCount} Ordner durchsuchbar`}</span>
+
+      {trimmed && (
+        <div className="folder-search-results">
+          {results.length === 0 ? (
+            <div className="empty-state compact">Kein Ordner passt zu dieser Suche.</div>
+          ) : (
+            results.map((item) => (
+              <article key={`${item.type}:${item.path}`} className="folder-search-row">
+                <span className="folder-search-type">{item.type}</span>
+                <div>
+                  <strong>{item.name}</strong>
+                  <small>{item.path}</small>
+                </div>
+                <button className="button secondary" onClick={() => onOpenFolder(item.path)}>
+                  <ExternalLink size={16} />
+                  Im Explorer öffnen
+                </button>
+              </article>
+            ))
+          )}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -1499,6 +1574,63 @@ function buildMediaFolderTargets(group: VisibleGroup): Array<{ id: string; targe
     if (!existing || (item.autoSelected && !existing.autoSelected)) targets.set(id, item)
   }
   return [...targets.values()].sort((a, b) => Number(b.autoSelected) - Number(a.autoSelected) || a.target.path.localeCompare(b.target.path, 'de'))
+}
+
+function buildFolderSearchItems(rootFolders: string[], result: ScanResult | null): FolderSearchItem[] {
+  const items = new Map<string, FolderSearchItem>()
+
+  for (const folder of rootFolders) {
+    addFolderSearchItem(items, {
+      path: folder,
+      name: basenameFromPath(folder),
+      type: 'Quelle'
+    })
+  }
+
+  if (result) {
+    for (const folder of result.folders) {
+      addFolderSearchItem(items, {
+        path: folder,
+        name: basenameFromPath(folder),
+        type: 'Video-Ordner'
+      })
+    }
+
+    for (const group of result.emptyFolderGroups) {
+      for (const folder of group.folders) {
+        addFolderSearchItem(items, {
+          path: folder.path,
+          name: folder.name,
+          type: 'Ordner ohne Videos'
+        })
+      }
+    }
+  }
+
+  return [...items.values()].sort((a, b) => a.name.localeCompare(b.name, 'de') || a.path.localeCompare(b.path, 'de'))
+}
+
+function addFolderSearchItem(items: Map<string, FolderSearchItem>, item: FolderSearchItem): void {
+  const key = normalizePath(item.path)
+  const existing = items.get(key)
+  if (!existing || folderSearchTypeWeight(item.type) > folderSearchTypeWeight(existing.type)) {
+    items.set(key, item)
+  }
+}
+
+function filterFolderSearchItems(items: FolderSearchItem[], query: string): FolderSearchItem[] {
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) return []
+
+  return items
+    .filter((item) => `${item.name} ${item.path}`.toLowerCase().includes(normalizedQuery))
+    .slice(0, 80)
+}
+
+function folderSearchTypeWeight(type: FolderSearchItem['type']): number {
+  if (type === 'Quelle') return 3
+  if (type === 'Video-Ordner') return 2
+  return 1
 }
 
 function folderToDeleteTarget(folder: FolderCandidate): DeleteTarget {

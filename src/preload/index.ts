@@ -13,6 +13,7 @@ const mediaApi: MediaApi = {
   exportMarked: (rows: ExportRow[]) => ipcRenderer.invoke('export-marked', rows),
   deleteFiles: (request: DeleteRequest) => ipcRenderer.invoke('delete-files', request),
   getVideoThumbnail: (path: string) => ipcRenderer.invoke('get-video-thumbnail', path),
+  openPathInExplorer: (path: string) => ipcRenderer.invoke('open-path-in-explorer', path),
   loadSettings: () => ipcRenderer.invoke('load-settings'),
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke('save-settings', settings)
 }

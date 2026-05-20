@@ -167,6 +167,11 @@ export interface DeleteResult {
 
 export interface DeletedHistoryEntry extends DeletedFile {}
 
+export interface OpenPathResult {
+  ok: boolean
+  error?: string
+}
+
 export interface MediaApi {
   selectFolders: () => Promise<string[]>
   scanFolders: (folders: string[], strictness?: MatchStrictness) => Promise<ScanResult>
@@ -174,6 +179,7 @@ export interface MediaApi {
   exportMarked: (rows: ExportRow[]) => Promise<{ canceled: boolean; filePath?: string }>
   deleteFiles: (request: DeleteRequest) => Promise<DeleteResult>
   getVideoThumbnail: (path: string) => Promise<string | undefined>
+  openPathInExplorer: (path: string) => Promise<OpenPathResult>
   loadSettings: () => Promise<AppSettings>
   saveSettings: (settings: AppSettings) => Promise<AppSettings>
 }

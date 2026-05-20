@@ -5,7 +5,7 @@ import { promises as fs } from 'node:fs'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { buildDuplicateGroups, buildFolderCandidateGroups, parseMediaName } from '../shared/matching'
 import { defaultSettings, normalizeSettings } from '../shared/settings'
-import type { AppSettings, DeleteRequest, DeleteResult, ExportRow, FolderCandidate, MatchStrictness, MediaFile, ScanProgress, ScanResult } from '../shared/types'
+import type { AppSettings, DeleteRequest, DeleteResult, ExportRow, FolderCandidate, MatchStrictness, MediaFile, OpenPathResult, ScanProgress, ScanResult } from '../shared/types'
 
 const VIDEO_EXTENSIONS = new Set(['.mkv', '.mp4', '.avi', '.mov', '.m4v', '.wmv', '.flv', '.webm'])
 const FINGERPRINT_CHUNK_SIZE = 64 * 1024
@@ -110,6 +110,10 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('get-video-thumbnail', async (_event, filePath: string): Promise<string | undefined> => {
     return getVideoThumbnail(filePath)
+  })
+
+  ipcMain.handle('open-path-in-explorer', async (_event, folderPath: string): Promise<OpenPathResult> => {
+    return openPathInExplorer(folderPath)
   })
 
   ipcMain.handle('load-settings', async (): Promise<AppSettings> => {
@@ -363,6 +367,18 @@ async function getVideoThumbnail(filePath: string): Promise<string | undefined> 
     return thumbnail.toDataURL()
   } catch {
     return undefined
+  }
+}
+
+async function openPathInExplorer(folderPath: string): Promise<OpenPathResult> {
+  try {
+    const error = await shell.openPath(folderPath)
+    return error ? { ok: false, error } : { ok: true }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Explorer konnte nicht geöffnet werden'
+    }
   }
 }
 
