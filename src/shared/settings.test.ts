@@ -12,6 +12,7 @@ describe('settings defaults', () => {
       modals: true,
       progress: true
     })
+    expect(defaultSettings.recentFolders).toEqual([])
     expect(defaultSettings.excludedMatches).toEqual([])
     expect(defaultSettings.excludedFiles).toEqual([])
     expect(defaultSettings.deleteHistory).toEqual([])

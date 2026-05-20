@@ -20,6 +20,7 @@ export interface AppSettings {
   mascot: MascotKind
   matchStrictness: MatchStrictness
   animations: AnimationSettings
+  recentFolders: string[]
   excludedMatches: ExcludedMatch[]
   excludedFiles: ExcludedFile[]
   deleteHistory: DeletedHistoryEntry[]
@@ -117,6 +118,7 @@ export interface ScanResult {
   filesScanned: number
   videosFound: number
   folders: string[]
+  allFolders: string[]
   extensions: string[]
   groups: DuplicateGroup[]
   emptyFolderGroups: FolderCandidateGroup[]

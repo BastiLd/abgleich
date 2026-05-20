@@ -6,6 +6,7 @@ const result: ScanResult = {
   filesScanned: 3,
   videosFound: 3,
   folders: ['A', 'B'],
+  allFolders: ['A', 'B'],
   extensions: ['mkv'],
   emptyFolderGroups: [],
   groups: [

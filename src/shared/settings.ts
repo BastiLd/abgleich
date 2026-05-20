@@ -10,6 +10,7 @@ export const defaultSettings: AppSettings = {
     modals: true,
     progress: true
   },
+  recentFolders: [],
   excludedMatches: [],
   excludedFiles: [],
   deleteHistory: []
@@ -31,6 +32,9 @@ export function normalizeSettings(value: unknown): AppSettings {
       modals: typeof animations.modals === 'boolean' ? animations.modals : defaultSettings.animations.modals,
       progress: typeof animations.progress === 'boolean' ? animations.progress : defaultSettings.animations.progress
     },
+    recentFolders: Array.isArray(input.recentFolders)
+      ? input.recentFolders.filter((folder): folder is string => typeof folder === 'string' && folder.trim().length > 0).slice(0, 20)
+      : [],
     excludedMatches: Array.isArray(input.excludedMatches)
       ? input.excludedMatches
           .filter((item) => item && typeof item === 'object')

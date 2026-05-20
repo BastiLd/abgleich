@@ -195,6 +195,7 @@ async function scanFolders(folders: string[], strictness: MatchStrictness): Prom
     filesScanned: counter.filesScanned,
     videosFound: discovered.length,
     folders: Array.from(new Set(discovered.map((file) => file.folder))).sort((a, b) => a.localeCompare(b, 'de')),
+    allFolders: Array.from(folderStats.keys()).sort((a, b) => a.localeCompare(b, 'de')),
     extensions: Array.from(new Set(discovered.map((file) => file.extension))).sort((a, b) => a.localeCompare(b, 'de')),
     groups,
     emptyFolderGroups

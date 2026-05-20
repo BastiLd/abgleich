@@ -50,7 +50,7 @@ type FilterMode = 'folder' | 'video' | 'custom'
 type ResultTab = MatchConfidence | 'all' | 'noVideoFolders'
 type VisibleGroup = Omit<DuplicateGroup, 'files'> & { files: DuplicateFile[] }
 type DeleteModalState = { targets: DeleteTarget[]; title: string } | null
-type FolderSearchItem = { path: string; name: string; type: 'Quelle' | 'Video-Ordner' | 'Ordner ohne Videos' }
+type FolderSearchItem = { path: string; name: string; type: 'Quelle' | 'Video-Ordner' | 'Ordner ohne Videos' | 'Gescannter Ordner' }
 type SeriesBucket = {
   key: string
   title: string
@@ -96,7 +96,10 @@ function App(): JSX.Element {
   const [deleteNotice, setDeleteNotice] = useState<string | null>(null)
 
   useEffect(() => {
-    void window.mediaApi.loadSettings().then(setSettings)
+    void window.mediaApi.loadSettings().then((saved) => {
+      setSettings(saved)
+      setFolders(saved.recentFolders)
+    })
     return window.mediaApi.onScanProgress((next) => setProgress(next))
   }, [])
 
@@ -159,7 +162,9 @@ function App(): JSX.Element {
     const selected = await window.mediaApi.selectFolders()
     if (selected.length === 0) return
 
-    setFolders((current) => Array.from(new Set([...current, ...selected])))
+    const nextFolders = Array.from(new Set([...folders, ...selected]))
+    setFolders(nextFolders)
+    await saveRecentFolders(nextFolders)
     clearScan()
   }
 
@@ -175,8 +180,10 @@ function App(): JSX.Element {
     setCustomPanelOpen(false)
   }
 
-  function removeFolder(path: string): void {
-    setFolders((current) => current.filter((folder) => folder !== path))
+  async function removeFolder(path: string): Promise<void> {
+    const nextFolders = folders.filter((folder) => folder !== path)
+    setFolders(nextFolders)
+    await saveRecentFolders(nextFolders)
     clearScan()
   }
 
@@ -278,6 +285,14 @@ function App(): JSX.Element {
 
   async function updateSettings(next: AppSettings): Promise<void> {
     const saved = await window.mediaApi.saveSettings(next)
+    setSettings(saved)
+  }
+
+  async function saveRecentFolders(nextFolders: string[]): Promise<void> {
+    const saved = await window.mediaApi.saveSettings({
+      ...settings,
+      recentFolders: nextFolders
+    })
     setSettings(saved)
   }
 
@@ -534,6 +549,7 @@ function App(): JSX.Element {
                   onDeleteFolders={(targets) => requestDelete(targets, 'Ordner löschen')}
                   onExcludeGroup={excludeGroup}
                   onExcludeFile={excludeFile}
+                  onOpenFolder={openFolderInExplorer}
                   index={index}
                 />
               ))}
@@ -547,6 +563,7 @@ function App(): JSX.Element {
                   onDeleteFolders={(targets) => requestDelete(targets, 'Ordner löschen')}
                   onExcludeFile={(file) => excludeFile(group, file)}
                   onExclude={() => excludeGroup(group)}
+                  onOpenFolder={openFolderInExplorer}
                   index={seriesBuckets.length + index}
                 />
               ))}
@@ -854,6 +871,7 @@ function SeriesView({
   onDeleteFolders,
   onExcludeGroup,
   onExcludeFile,
+  onOpenFolder,
   index
 }: {
   bucket: SeriesBucket
@@ -863,6 +881,7 @@ function SeriesView({
   onDeleteFolders: (targets: DeleteTarget[]) => void
   onExcludeGroup: (group: VisibleGroup) => void
   onExcludeFile: (group: VisibleGroup, file: DuplicateFile) => void
+  onOpenFolder: (path: string) => void
   index: number
 }): JSX.Element {
   const [open, setOpen] = useState(false)
@@ -892,6 +911,7 @@ function SeriesView({
             onDeleteFolders={onDeleteFolders}
             onExcludeGroup={onExcludeGroup}
             onExcludeFile={onExcludeFile}
+            onOpenFolder={onOpenFolder}
           />
         ))}
       </div>
@@ -907,7 +927,8 @@ function SeasonView({
   onDeleteOne,
   onDeleteFolders,
   onExcludeGroup,
-  onExcludeFile
+  onExcludeFile,
+  onOpenFolder
 }: {
   season: number
   groups: VisibleGroup[]
@@ -917,6 +938,7 @@ function SeasonView({
   onDeleteFolders: (targets: DeleteTarget[]) => void
   onExcludeGroup: (group: VisibleGroup) => void
   onExcludeFile: (group: VisibleGroup, file: DuplicateFile) => void
+  onOpenFolder: (path: string) => void
 }): JSX.Element {
   const [open, setOpen] = useState(false)
 
@@ -938,6 +960,7 @@ function SeasonView({
             onDeleteFolders={onDeleteFolders}
             onExcludeFile={(file) => onExcludeFile(group, file)}
             onExclude={() => onExcludeGroup(group)}
+            onOpenFolder={onOpenFolder}
             index={index}
           />
         ))}
@@ -954,6 +977,7 @@ function DuplicateGroupView({
   onDeleteFolders,
   onExcludeFile,
   onExclude,
+  onOpenFolder,
   index
 }: {
   group: VisibleGroup
@@ -963,6 +987,7 @@ function DuplicateGroupView({
   onDeleteFolders: (targets: DeleteTarget[]) => void
   onExcludeFile: (file: DuplicateFile) => void
   onExclude: () => void
+  onOpenFolder: (path: string) => void
   index: number
 }): JSX.Element {
   const [open, setOpen] = useState(false)
@@ -1063,6 +1088,10 @@ function DuplicateGroupView({
               <button className="mini-secondary" onClick={() => onExcludeFile(file)} title="Diese Datei als falsch erkannt ausblenden">
                 <EyeOff size={15} />
                 Falsch
+              </button>
+              <button className="mini-secondary" onClick={() => onOpenFolder(file.folder)} title="Ordner dieser Datei im Explorer öffnen">
+                <ExternalLink size={15} />
+                Ordner öffnen
               </button>
             </div>
           </div>
@@ -1588,6 +1617,14 @@ function buildFolderSearchItems(rootFolders: string[], result: ScanResult | null
   }
 
   if (result) {
+    for (const folder of result.allFolders) {
+      addFolderSearchItem(items, {
+        path: folder,
+        name: basenameFromPath(folder),
+        type: 'Gescannter Ordner'
+      })
+    }
+
     for (const folder of result.folders) {
       addFolderSearchItem(items, {
         path: folder,
@@ -1620,16 +1657,22 @@ function addFolderSearchItem(items: Map<string, FolderSearchItem>, item: FolderS
 
 function filterFolderSearchItems(items: FolderSearchItem[], query: string): FolderSearchItem[] {
   const normalizedQuery = query.trim().toLowerCase()
+  const comparableQuery = normalizeFolderName(query)
   if (!normalizedQuery) return []
 
   return items
-    .filter((item) => `${item.name} ${item.path}`.toLowerCase().includes(normalizedQuery))
+    .filter((item) => {
+      const rawHaystack = `${item.name} ${item.path}`.toLowerCase()
+      const comparableHaystack = normalizeFolderName(`${item.name} ${item.path}`)
+      return rawHaystack.includes(normalizedQuery) || (comparableQuery.length > 0 && comparableHaystack.includes(comparableQuery))
+    })
     .slice(0, 80)
 }
 
 function folderSearchTypeWeight(type: FolderSearchItem['type']): number {
   if (type === 'Quelle') return 3
   if (type === 'Video-Ordner') return 2
+  if (type === 'Ordner ohne Videos') return 2
   return 1
 }
 
